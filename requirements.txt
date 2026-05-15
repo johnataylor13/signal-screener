@@ -1,0 +1,7 @@
+yfinance>=0.2.40
+pandas>=2.0
+numpy>=1.26
+scipy>=1.12
+requests>=2.31
+lxml>=5.0        # for pandas read_html (S&P 500 Wikipedia)
+html5lib>=1.1    # fallback parser for read_html

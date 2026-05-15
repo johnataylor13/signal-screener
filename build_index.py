@@ -1,0 +1,177 @@
+"""
+build_index.py
+Regenerates docs/index.html after each screener run.
+Lists all signal_YYYYMMDD.html editions in reverse chronological order,
+with the latest linked prominently.
+"""
+
+import glob
+import os
+import re
+from datetime import datetime
+
+DOCS_DIR = "docs"
+
+
+def build():
+    paths = sorted(
+        glob.glob(os.path.join(DOCS_DIR, "signal_????????.html")),
+        reverse=True,
+    )
+
+    if not paths:
+        print("No signal reports found in docs/. Nothing to do.")
+        return
+
+    entries = []
+    for path in paths:
+        m = re.search(r"signal_(\d{8})\.html", path)
+        if not m:
+            continue
+        raw = m.group(1)
+        dt = datetime.strptime(raw, "%Y%m%d")
+        anchor = datetime(2025, 5, 15)
+        issue = max(1, ((dt - anchor).days // 14) + 1)
+        entries.append({
+            "filename": os.path.basename(path),
+            "date_str": dt.strftime("%b %d, %Y"),
+            "issue": issue,
+        })
+
+    latest = entries[0]
+    previous = entries[1:]
+
+    prev_items = ""
+    for e in previous:
+        prev_items += f"""
+        <div class="archive-item">
+          <a href="{e['filename']}">{e['date_str']}</a>
+          <span class="issue-num">#{e['issue']:02d}</span>
+        </div>"""
+
+    if not prev_items:
+        prev_items = '<div class="archive-empty">No previous editions yet.</div>'
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal — Biweekly Screen</title>
+<style>
+  :root {{
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --border: #1e1e1e;
+    --border-active: #2e2e2e;
+    --text: #e8e8e8;
+    --muted: #555;
+    --accent: #c8f542;
+    --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }}
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }}
+  header {{
+    padding: 32px 20px 24px;
+    border-bottom: 1px solid var(--border);
+  }}
+  .wordmark {{ font-size: 11px; letter-spacing: 0.2em; color: var(--muted); text-transform: uppercase; }}
+  h1 {{ font-size: 22px; font-weight: 300; letter-spacing: -0.02em; margin-top: 12px; }}
+  .subline {{ font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin-top: 4px; }}
+  .latest {{
+    margin: 24px 20px 0;
+    padding: 20px;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+  }}
+  .section-label {{
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 12px;
+  }}
+  .latest-link {{
+    display: inline-block;
+    font-size: 16px;
+    color: var(--text);
+    text-decoration: none;
+    letter-spacing: -0.01em;
+  }}
+  .latest-link:hover {{ color: var(--accent); }}
+  .latest-meta {{ font-size: 10px; color: var(--muted); margin-top: 6px; }}
+  .archive {{ padding: 32px 20px 48px; }}
+  .archive-label {{
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }}
+  .archive-item {{
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }}
+  .archive-item a {{
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+    transition: color 0.15s;
+  }}
+  .archive-item a:hover {{ color: var(--text); }}
+  .issue-num {{ font-size: 10px; color: #333; }}
+  .archive-empty {{ color: #333; font-size: 12px; padding: 12px 0; }}
+  footer {{
+    padding: 24px 20px;
+    border-top: 1px solid var(--border);
+    font-size: 10px;
+    color: #333;
+  }}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wordmark">Signal</div>
+  <h1>Biweekly Screen</h1>
+  <div class="subline">Cup &amp; handle · low debt · news surge · cross-sector</div>
+</header>
+
+<div class="latest">
+  <div class="section-label">Latest Edition — #{latest['issue']:02d}</div>
+  <a class="latest-link" href="{latest['filename']}">→ {latest['date_str']}</a>
+  <div class="latest-meta">10 picks · algorithmic screen · not investment advice</div>
+</div>
+
+<div class="archive">
+  <div class="archive-label">Previous Editions</div>
+  {prev_items}
+</div>
+
+<footer>
+  Runs every other Thursday after market close. Source on GitHub.
+</footer>
+
+</body>
+</html>"""
+
+    out = os.path.join(DOCS_DIR, "index.html")
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"Index written to {out} ({len(entries)} editions)")
+
+
+if __name__ == "__main__":
+    build()
