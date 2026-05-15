@@ -31,7 +31,7 @@ jobs:
               anchor = date(2025, 5, 15)
               today = date.today()
               print('run=' + str((today - anchor).days % 14 == 0).lower())
-          " >> \$GITHUB_OUTPUT
+          " >> $GITHUB_OUTPUT
 
       - name: Set up Python
         if: steps.gate.outputs.run == 'true'
