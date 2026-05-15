@@ -160,6 +160,11 @@ def build():
   {prev_items}
 </div>
 
+<div style="padding:0 20px 32px">
+  <div style="font-size:9px;letter-spacing:0.18em;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Validation</div>
+  <a href="backtest.html" style="color:var(--muted);text-decoration:none;font-size:13px">→ 52-week backtest vs SPY</a>
+</div>
+
 <footer>
   Runs every Wednesday after market close. Available Thursday morning.
 </footer>
