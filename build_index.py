@@ -161,7 +161,7 @@ def build():
 </div>
 
 <footer>
-  Runs every Thursday after market close. Source on GitHub.
+  Runs every Wednesday after market close. Available Thursday morning.
 </footer>
 
 </body>
