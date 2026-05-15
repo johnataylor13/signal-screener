@@ -1,8 +1,8 @@
 """
 backtest.py
 Simulates running the Signal screener weekly over the past 52 weeks.
-Equal dollar invested in each of the top 10 picks per week, held for one week.
-Compares cumulative return against SPY.
+Buy-and-hold DCA: $1,000/week deployed into Signal picks (never sold),
+compared against $1,000/week into SPY and $1,000/week into the S&P 500 index.
 
 Limitations (shown in report):
   - News surge excluded — no historical free API
@@ -32,8 +32,9 @@ warnings.filterwarnings("ignore")
 
 TOP_N = 10
 LOOKBACK_WEEKS = 52
-DETECT_DAYS = 260   # trading days fed into cup_handle.detect()
-PRICE_BATCH = 100   # tickers per yfinance batch download
+DETECT_DAYS = 260    # trading days fed into cup_handle.detect()
+PRICE_BATCH = 100    # tickers per yfinance batch download
+WEEKLY_INVEST = 1_000.0  # dollars deployed per strategy per week
 
 
 # ── Date helpers ──────────────────────────────────────────────────────────────
@@ -79,18 +80,16 @@ def close_on(prices: pd.DataFrame, ticker: str, target: datetime.date) -> float 
     return float(available.iloc[-1]) if not available.empty else None
 
 
-# ── Per-week simulation ───────────────────────────────────────────────────────
+# ── Pattern detection ─────────────────────────────────────────────────────────
 
-def simulate_week(
+def detect_picks(
     entry_date: datetime.date,
-    exit_date: datetime.date,
     prices: pd.DataFrame,
     filtered_universe: list[dict],
-) -> dict | None:
+) -> tuple[list[dict], int]:
     """
-    Run cup & handle detection as of entry_date, pick top 10,
-    and compute 1-week returns to exit_date.
-    Returns None if no valid picks with exit prices.
+    Run cup & handle detection as of entry_date using only data visible then.
+    Returns (sector-capped top-N picks with entry prices, n_candidates).
     """
     candidates = []
 
@@ -99,7 +98,6 @@ def simulate_week(
         if ticker not in prices.columns:
             continue
 
-        # Slice to data visible on entry_date
         col = prices[ticker].dropna()
         col = col[col.index <= entry_date]
         if len(col) < 60:
@@ -115,18 +113,17 @@ def simulate_week(
             continue
 
         candidates.append({
-            "ticker": ticker,
-            "sector": row["sector"],
-            "type": row["type"],
-            "confidence": result["confidence"],
+            "ticker":       ticker,
+            "sector":       row["sector"],
+            "type":         row["type"],
+            "confidence":   result["confidence"],
             "cup_depth_pct": result["cup_depth_pct"],
-            "entry_price": round(entry_price, 2),
+            "entry_price":  round(entry_price, 2),
         })
 
     if not candidates:
-        return None
+        return [], 0
 
-    # Sector-capped top N by cup confidence
     candidates.sort(key=lambda x: x["confidence"], reverse=True)
     sector_counts: dict[str, int] = {}
     picks = []
@@ -139,35 +136,13 @@ def simulate_week(
         if len(picks) >= TOP_N:
             break
 
-    if not picks:
-        return None
-
-    # Attach exit prices and returns
-    valid = []
-    for p in picks:
-        exit_price = close_on(prices, p["ticker"], exit_date)
-        if not exit_price:
-            continue
-        p["exit_price"] = round(exit_price, 2)
-        p["weekly_return"] = round((exit_price - p["entry_price"]) / p["entry_price"], 5)
-        valid.append(p)
-
-    if not valid:
-        return None
-
-    return {
-        "date": entry_date,
-        "exit_date": exit_date,
-        "picks": valid,
-        "portfolio_return": float(np.mean([p["weekly_return"] for p in valid])),
-        "n_candidates": len(candidates),
-    }
+    return picks, len(candidates)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def run():
-    print("\n=== Signal Backtest — 52 weeks ===\n")
+    print("\n=== Signal Backtest — 52 weeks (buy-and-hold DCA) ===\n")
 
     # 1. Universe
     universe = load_universe()
@@ -200,84 +175,134 @@ def run():
         for k, v in debt_ok.items()
     ]
 
-    # 3. Batch download prices (filtered tickers + SPY benchmark)
-    all_tickers = [r["ticker"] for r in filtered] + ["SPY"]
+    # 3. Batch download prices (filtered tickers + benchmarks)
+    all_tickers = [r["ticker"] for r in filtered] + ["SPY", "^GSPC", "QQQ"]
     print(f"\nDownloading 2 years of prices for {len(all_tickers)} tickers...")
     prices = batch_download(all_tickers)
     print(f"  Price matrix: {prices.shape[0]} days × {prices.shape[1]} tickers")
 
-    # 4. Weekly simulation loop
-    # Need 53 Wednesdays: 52 entry dates + 1 final exit date
+    # 4. Weekly simulation — buy-and-hold DCA
+    # Need 53 Wednesdays: 52 entry/buy dates + 1 final valuation date
     all_wednesdays = get_wednesdays(LOOKBACK_WEEKS + 1)
     entry_dates = all_wednesdays[:-1]
 
     print(f"\nSimulating {len(entry_dates)} weeks "
           f"({entry_dates[0]} → {entry_dates[-1]})...")
 
+    # Running positions (never sold)
+    signal_positions: list[dict] = []  # {ticker, shares}
+    spy_shares   = 0.0
+    sp500_shares = 0.0
+    qqq_shares   = 0.0
+
     weekly_results = []
     for i, entry in enumerate(entry_dates):
         exit_date = all_wednesdays[i + 1]
-        result = simulate_week(entry, exit_date, prices, filtered)
-        if result:
-            n = len(result["picks"])
-            r = result["portfolio_return"] * 100
-            print(f"  {entry}: {n} picks, return={r:+.1f}%")
-            weekly_results.append(result)
-        else:
-            print(f"  {entry}: no picks")
+
+        picks, n_cand = detect_picks(entry, prices, filtered)
+
+        # Deploy $WEEKLY_INVEST equally across Signal picks
+        if picks:
+            per_pick = round(WEEKLY_INVEST / len(picks), 4)
+            for p in picks:
+                shares = per_pick / p["entry_price"]
+                p["cost"]   = per_pick
+                p["shares"] = round(shares, 6)
+                signal_positions.append({"ticker": p["ticker"], "shares": shares})
+
+        # Deploy $WEEKLY_INVEST into SPY
+        spy_ep = close_on(prices, "SPY", entry)
+        if spy_ep:
+            spy_shares += WEEKLY_INVEST / spy_ep
+
+        # Deploy $WEEKLY_INVEST into ^GSPC (conceptual index position)
+        sp500_ep = close_on(prices, "^GSPC", entry)
+        if sp500_ep:
+            sp500_shares += WEEKLY_INVEST / sp500_ep
+
+        # Deploy $WEEKLY_INVEST into QQQ
+        qqq_ep = close_on(prices, "QQQ", entry)
+        if qqq_ep:
+            qqq_shares += WEEKLY_INVEST / qqq_ep
+
+        # Value all portfolios at end of week (exit_date)
+        signal_val = sum(
+            pos["shares"] * (close_on(prices, pos["ticker"], exit_date) or 0.0)
+            for pos in signal_positions
+        )
+
+        spy_xp   = close_on(prices, "SPY",   exit_date)
+        sp500_xp = close_on(prices, "^GSPC", exit_date)
+        qqq_xp   = close_on(prices, "QQQ",   exit_date)
+        spy_val   = spy_shares   * spy_xp   if spy_xp   else 0.0
+        sp500_val = sp500_shares * sp500_xp if sp500_xp else 0.0
+        qqq_val   = qqq_shares   * qqq_xp   if qqq_xp   else 0.0
+
+        total_deployed = (i + 1) * WEEKLY_INVEST
+
+        weekly_results.append({
+            "date":           entry,
+            "exit_date":      exit_date,
+            "picks":          picks,
+            "n_candidates":   n_cand,
+            "signal_value":   round(signal_val, 2),
+            "spy_value":      round(spy_val, 2),
+            "sp500_value":    round(sp500_val, 2),
+            "qqq_value":      round(qqq_val, 2),
+            "total_deployed": round(total_deployed, 2),
+        })
+
+        n_p = len(picks)
+        print(f"  {entry}: {n_p:2d} picks | "
+              f"Signal ${signal_val:>8,.0f} | "
+              f"SPY ${spy_val:>8,.0f} | "
+              f"S&P ${sp500_val:>8,.0f} | "
+              f"QQQ ${qqq_val:>8,.0f} | "
+              f"Deployed ${total_deployed:>7,.0f}")
 
     if not weekly_results:
         print("No results produced. Exiting.")
         return
 
-    # 5. SPY benchmark returns
-    for i, week in enumerate(weekly_results):
-        spy_entry = close_on(prices, "SPY", week["date"])
-        spy_exit  = close_on(prices, "SPY", week["exit_date"])
-        if spy_entry and spy_exit:
-            week["spy_return"] = (spy_exit - spy_entry) / spy_entry
-        else:
-            week["spy_return"] = 0.0
+    # 5. Summary stats
+    final       = weekly_results[-1]
+    total_dep   = final["total_deployed"]
+    signal_fin  = final["signal_value"]
+    spy_fin     = final["spy_value"]
+    sp500_fin   = final["sp500_value"]
+    qqq_fin     = final["qqq_value"]
 
-    # 6. Cumulative returns
-    port_cum = 1.0
-    spy_cum  = 1.0
-    for week in weekly_results:
-        port_cum *= 1 + week["portfolio_return"]
-        spy_cum  *= 1 + week["spy_return"]
-        week["portfolio_cumulative"] = round((port_cum - 1) * 100, 3)  # % gain
-        week["spy_cumulative"]       = round((spy_cum  - 1) * 100, 3)
+    def gain_pct(val: float) -> float:
+        return (val - total_dep) / total_dep * 100 if total_dep else 0.0
 
-    # 7. Summary stats
-    port_returns = [w["portfolio_return"] for w in weekly_results]
-    spy_returns  = [w["spy_return"]       for w in weekly_results]
-    wins = sum(p > s for p, s in zip(port_returns, spy_returns))
-    best_idx  = int(np.argmax(port_returns))
-    worst_idx = int(np.argmin(port_returns))
+    wins_vs_spy = sum(w["signal_value"] > w["spy_value"] for w in weekly_results)
 
     summary = {
-        "total_return":      round((port_cum - 1) * 100, 2),
-        "spy_total_return":  round((spy_cum  - 1) * 100, 2),
-        "weeks":             len(weekly_results),
-        "start_date":        str(weekly_results[0]["date"]),
-        "end_date":          str(weekly_results[-1]["exit_date"]),
-        "win_rate_vs_spy":   round(wins / len(weekly_results) * 100, 1),
-        "avg_weekly_return": round(float(np.mean(port_returns)) * 100, 2),
-        "best_week_return":  round(port_returns[best_idx]  * 100, 2),
-        "worst_week_return": round(port_returns[worst_idx] * 100, 2),
-        "best_week_date":    str(weekly_results[best_idx]["date"]),
-        "worst_week_date":   str(weekly_results[worst_idx]["date"]),
+        "total_deployed":   round(total_dep,  2),
+        "signal_final":     round(signal_fin, 2),
+        "spy_final":        round(spy_fin,    2),
+        "sp500_final":      round(sp500_fin,  2),
+        "qqq_final":        round(qqq_fin,    2),
+        "signal_gain_pct":  round(gain_pct(signal_fin), 2),
+        "spy_gain_pct":     round(gain_pct(spy_fin),    2),
+        "sp500_gain_pct":   round(gain_pct(sp500_fin),  2),
+        "qqq_gain_pct":     round(gain_pct(qqq_fin),    2),
+        "weeks":            len(weekly_results),
+        "start_date":       str(weekly_results[0]["date"]),
+        "end_date":         str(final["exit_date"]),
+        "win_rate_vs_spy":  round(wins_vs_spy / len(weekly_results) * 100, 1),
+        "weekly_invest":    WEEKLY_INVEST,
     }
 
-    print(f"\n{'='*40}")
-    print(f"Signal total return : {summary['total_return']:+.1f}%")
-    print(f"SPY total return    : {summary['spy_total_return']:+.1f}%")
-    print(f"Win rate vs SPY     : {summary['win_rate_vs_spy']:.0f}%")
-    print(f"Avg weekly return   : {summary['avg_weekly_return']:+.2f}%")
-    print(f"Best week           : {summary['best_week_return']:+.1f}% ({summary['best_week_date']})")
-    print(f"Worst week          : {summary['worst_week_return']:+.1f}% ({summary['worst_week_date']})")
+    print(f"\n{'='*48}")
+    print(f"Total deployed       : ${total_dep:>10,.0f}")
+    print(f"Signal final value   : ${signal_fin:>10,.0f}  ({gain_pct(signal_fin):+.1f}%)")
+    print(f"SPY final value      : ${spy_fin:>10,.0f}  ({gain_pct(spy_fin):+.1f}%)")
+    print(f"S&P 500 final value  : ${sp500_fin:>10,.0f}  ({gain_pct(sp500_fin):+.1f}%)")
+    print(f"QQQ final value      : ${qqq_fin:>10,.0f}  ({gain_pct(qqq_fin):+.1f}%)")
+    print(f"Win rate vs SPY      : {summary['win_rate_vs_spy']:.0f}%")
 
-    # 8. Render HTML report
+    # 6. Render HTML report
     import os
     os.makedirs("docs", exist_ok=True)
     backtest_report.save(weekly_results, summary, "docs/backtest.html")
