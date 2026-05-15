@@ -22,11 +22,15 @@ jobs:
         id: gate
         run: |
           python3 -c "
+          import os
           from datetime import date
-          anchor = date(2025, 5, 15)
-          today = date.today()
-          on_week = (today - anchor).days % 14 == 0
-          print('run=' + str(on_week).lower())
+          # Manual triggers always run; only the schedule is gated to every other Thursday
+          if os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch':
+              print('run=true')
+          else:
+              anchor = date(2025, 5, 15)
+              today = date.today()
+              print('run=' + str((today - anchor).days % 14 == 0).lower())
           " >> \$GITHUB_OUTPUT
 
       - name: Set up Python
