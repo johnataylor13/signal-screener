@@ -4,6 +4,7 @@ on:
   schedule:
     # Every Thursday at 10pm UTC = 6pm ET (2hr after market close)
     - cron: '0 22 * * 4'
+    # Runs every Thursday; no biweekly gate needed
   workflow_dispatch:  # manual trigger for testing
 
 jobs:
@@ -18,44 +19,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check if this is a report Thursday
-        id: gate
-        run: |
-          python3 -c "
-          import os
-          from datetime import date
-          # Manual triggers always run; only the schedule is gated to every other Thursday
-          if os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch':
-              print('run=true')
-          else:
-              anchor = date(2025, 5, 15)
-              today = date.today()
-              print('run=' + str((today - anchor).days % 14 == 0).lower())
-          " >> $GITHUB_OUTPUT
-
       - name: Set up Python
-        if: steps.gate.outputs.run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install dependencies
-        if: steps.gate.outputs.run == 'true'
         run: pip install -r requirements.txt
 
       - name: Run screener
-        if: steps.gate.outputs.run == 'true'
         run: python screen.py
 
       - name: Move report into docs and rebuild index
-        if: steps.gate.outputs.run == 'true'
         run: |
           mkdir -p docs
           mv signal_*.html docs/
           python build_index.py
 
       - name: Commit and push
-        if: steps.gate.outputs.run == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
