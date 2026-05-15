@@ -66,7 +66,7 @@ def render(picks: list[dict], report_date: date = None) -> str:
 
     # Determine issue number (weeks since anchor, divided by 2)
     anchor = date(2025, 5, 15)
-    issue_num = max(1, ((report_date - anchor).days // 14) + 1)
+    issue_num = max(1, ((report_date - anchor).days // 7) + 1)
 
     picks_json = json.dumps(picks)
     chartjs_src = _chartjs()
