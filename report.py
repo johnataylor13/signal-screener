@@ -23,11 +23,11 @@ def _chartjs() -> str:
 
 
 def next_report_date(today: date) -> date:
-    """Find the next Thursday that is an even biweekly interval from a fixed anchor."""
-    anchor = date(2025, 5, 15)  # First report date (a Thursday)
-    days_since = (today - anchor).days
-    periods = (days_since // 14) + 1
-    return anchor + timedelta(weeks=periods * 2)
+    """Return the date of the next Wednesday run."""
+    days_until = (2 - today.weekday()) % 7  # 2 = Wednesday
+    if days_until == 0:
+        days_until = 7
+    return today + timedelta(days=days_until)
 
 
 def _color_de(de_val):
@@ -182,7 +182,7 @@ def render(picks: list[dict], report_date: date = None) -> str:
       <span>{report_date_str}</span>
     </div>
   </div>
-  <h1>Biweekly Screen</h1>
+  <h1>Weekly Screen</h1>
   <div class="subline">10 picks — cup &amp; handle · low debt · news surge · cross-sector</div>
 </header>
 

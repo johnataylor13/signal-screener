@@ -57,7 +57,7 @@ def build():
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Signal — Biweekly Screen</title>
+<title>Signal — Weekly Screen</title>
 <style>
   :root {{
     --bg: #0a0a0a;
@@ -145,7 +145,7 @@ def build():
 
 <header>
   <div class="wordmark">Signal</div>
-  <h1>Biweekly Screen</h1>
+  <h1>Weekly Screen</h1>
   <div class="subline">Cup &amp; handle · low debt · news surge · cross-sector</div>
 </header>
 

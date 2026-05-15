@@ -1,4 +1,4 @@
-name: Biweekly Stock Screener
+name: Weekly Stock Screener
 
 on:
   schedule:

@@ -1,6 +1,6 @@
 """
 screen.py
-Biweekly stock + ETF screener.
+Weekly stock + ETF screener.
 
 Steps:
   1. Load universe (S&P 500 + curated ETFs)
@@ -346,7 +346,7 @@ def select_top_10(candidates: list[dict]) -> list[dict]:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def run():
-    print("\n=== Signal Biweekly Screener ===\n")
+    print("\n=== Signal Weekly Screener ===\n")
 
     # 1. Universe
     universe = load_universe()
