@@ -1,0 +1,39 @@
+{
+  "champion": {
+    "avg_return": 0.004,
+    "win_rate": 0.462,
+    "rolling_12w": -0.0044,
+    "best_week": 0.0424,
+    "worst_week": -0.044,
+    "total_picks": 520,
+    "assessable_picks": 410,
+    "reached_5pct_n": 316,
+    "not_reached_5pct_n": 94,
+    "truncated_5pct_n": 110,
+    "pct_reached_5pct": 0.771,
+    "avg_days_to_5pct": 18.7
+  },
+  "challenger": {
+    "avg_return": 0.0092,
+    "win_rate": 0.519,
+    "rolling_12w": 0.0067,
+    "best_week": 0.1806,
+    "worst_week": -0.0675,
+    "total_picks": 510,
+    "assessable_picks": 400,
+    "reached_5pct_n": 320,
+    "not_reached_5pct_n": 80,
+    "truncated_5pct_n": 110,
+    "pct_reached_5pct": 0.8,
+    "avg_days_to_5pct": 15.1
+  },
+  "spy": {
+    "avg_return": 0.0032,
+    "rolling_12w": 0.0026
+  },
+  "weeks": 52,
+  "start_date": "2025-09-24",
+  "end_date": "2026-09-23",
+  "weekly_invest": 1000.0,
+  "five_pct_cap_days": 63
+}

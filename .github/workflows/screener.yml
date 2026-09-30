@@ -26,10 +26,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run screener
-        run: python screen.py
+      - name: Run screener (combined champion + challenger)
+        run: python screen.py --strategy combined
 
-      - name: Move report into docs and rebuild index
+      - name: Move reports into docs and rebuild index
         run: |
           mkdir -p docs
           mv signal_*.html docs/

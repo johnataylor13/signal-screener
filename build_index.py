@@ -14,6 +14,7 @@ DOCS_DIR = "docs"
 
 
 def build():
+    # Champion editions: signal_YYYYMMDD.html
     paths = sorted(
         glob.glob(os.path.join(DOCS_DIR, "signal_????????.html")),
         reverse=True,
@@ -31,7 +32,7 @@ def build():
         raw = m.group(1)
         dt = datetime.strptime(raw, "%Y%m%d")
         anchor = datetime(2025, 5, 15)
-        issue = max(1, ((dt - anchor).days // 14) + 1)
+        issue = max(1, ((dt - anchor).days // 7) + 1)
         entries.append({
             "filename": os.path.basename(path),
             "date_str": dt.strftime("%b %d, %Y"),
@@ -51,6 +52,8 @@ def build():
 
     if not prev_items:
         prev_items = '<div class="archive-empty">No previous editions yet.</div>'
+
+    challenger_section = ""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -133,6 +136,8 @@ def build():
   .archive-item a:hover {{ color: var(--text); }}
   .issue-num {{ font-size: 10px; color: #333; }}
   .archive-empty {{ color: #333; font-size: 12px; padding: 12px 0; }}
+  .challenger-box {{ border-color: var(--orange); margin-top: 16px; }}
+  .challenger-label {{ color: var(--orange); }}
   footer {{
     padding: 24px 20px;
     border-top: 1px solid var(--border);
@@ -146,19 +151,21 @@ def build():
 <header>
   <div class="wordmark">Signal</div>
   <h1>Weekly Screen</h1>
-  <div class="subline">Cup &amp; handle · low debt · news surge · cross-sector</div>
+  <div class="subline">V1 cup &amp; handle · V2 momentum · champion / challenger</div>
 </header>
 
 <div class="latest">
   <div class="section-label">Latest Edition — #{latest['issue']:02d}</div>
   <a class="latest-link" href="{latest['filename']}">→ {latest['date_str']}</a>
-  <div class="latest-meta">10 picks · algorithmic screen · not investment advice</div>
+  <div class="latest-meta">champion + challenger tabs · algorithmic screen · not investment advice</div>
 </div>
 
 <div class="archive">
   <div class="archive-label">Previous Editions</div>
   {prev_items}
 </div>
+
+{challenger_section}
 
 <footer>
   Runs every Wednesday after market close. Available Thursday morning.

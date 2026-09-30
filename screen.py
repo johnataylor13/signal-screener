@@ -27,6 +27,7 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cup_handle
+import momentum_signal
 import report as report_module
 
 warnings.filterwarnings("ignore")
@@ -157,8 +158,9 @@ def passes_debt_filter(de: float | None, ticker_type: str) -> bool:
 
 
 # ── Step 3: Price history + returns + cup & handle ────────────────────────────
-def fetch_price_history(ticker: str, days: int = PRICE_HISTORY_DAYS) -> pd.Series | None:
-    """Returns a daily close price Series."""
+def fetch_price_history(ticker: str, days: int = PRICE_HISTORY_DAYS,
+                        full_ohlcv: bool = False) -> pd.Series | pd.DataFrame | None:
+    """Returns a daily close price Series, or full OHLCV DataFrame if full_ohlcv=True."""
     try:
         end = datetime.date.today()
         start = end - datetime.timedelta(days=days + 10)
@@ -166,6 +168,11 @@ def fetch_price_history(ticker: str, days: int = PRICE_HISTORY_DAYS) -> pd.Serie
                            progress=False, auto_adjust=True)
         if hist.empty or len(hist) < 60:
             return None
+        if full_ohlcv:
+            df = hist[["Open", "High", "Low", "Close", "Volume"]]
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            return df
         return hist["Close"].squeeze()
     except Exception:
         return None
@@ -345,8 +352,13 @@ def select_top_10(candidates: list[dict]) -> list[dict]:
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-def run():
-    print("\n=== Signal Weekly Screener ===\n")
+def run(strategy=None):
+    if strategy is None:
+        from strategies import CHAMPION
+        strategy = CHAMPION
+
+    label = strategy.label if hasattr(strategy, "label") else "Champion"
+    print(f"\n=== Signal Weekly Screener — {label} ===\n")
 
     # 1. Universe
     universe = load_universe()
@@ -382,6 +394,31 @@ def run():
     cup_candidates = []
 
     def process_ticker(ticker, meta):
+        if strategy.name == "challenger":
+            ohlcv = fetch_price_history(ticker, full_ohlcv=True)
+            if ohlcv is None:
+                return None
+            mom = momentum_signal.score(ohlcv)
+            if mom is None:
+                return None
+            closes = ohlcv["Close"].squeeze()
+            chart_prices = downsample_for_chart(closes.iloc[-260:], n_points=60)
+            returns = compute_returns(closes)
+            return {
+                "ticker": ticker,
+                "type": meta["type"],
+                "name": meta.get("short_name", ticker),
+                "sector": meta["sector"],
+                "price": round(meta["price"], 2),
+                "desc": meta.get("desc", ""),
+                "debt_equity": meta.get("debt_equity"),
+                "returns": {k: v for k, v in returns.items() if not k.startswith("_")},
+                "prices": chart_prices,
+                "momentum": mom,
+                "_score": mom["composite"],
+            }
+
+        # Champion path (cup & handle) — unchanged
         closes = fetch_price_history(ticker)
         if closes is None:
             return None
@@ -424,24 +461,28 @@ def run():
             if (i + 1) % 50 == 0:
                 print(f"  {i+1}/{len(debt_ok)} processed...")
 
-    print(f"  Cup & handle patterns found: {len(cup_candidates)}")
+    candidate_label = "momentum" if strategy.name == "challenger" else "cup & handle"
+    print(f"  {candidate_label.capitalize()} candidates found: {len(cup_candidates)}")
 
     if not cup_candidates:
         print("No candidates passed all filters. Exiting.")
         return
 
-    # 4. News counts
-    print(f"\nFetching news counts for {len(cup_candidates)} candidates...")
-    for c in cup_candidates:
-        c["news"] = fetch_news_counts(c["ticker"], c["name"])
-        time.sleep(0.1)  # gentle rate limiting
+    if strategy.name == "champion":
+        # 4. News counts (champion only)
+        print(f"\nFetching news counts for {len(cup_candidates)} candidates...")
+        for c in cup_candidates:
+            c["news"] = fetch_news_counts(c["ticker"], c["name"])
+            time.sleep(0.1)  # gentle rate limiting
 
-    # 4b. Normalise news into a 0-100 index relative to all candidates
-    compute_news_index(cup_candidates)
+        # 4b. Normalise news into a 0-100 index relative to all candidates
+        compute_news_index(cup_candidates)
 
-    # 5. Score and select
-    for c in cup_candidates:
-        c["_score"] = score_pick(c["news_index"], c["cup"])
+        # 5. Score and select (champion formula)
+        for c in cup_candidates:
+            c["_score"] = score_pick(c["news_index"], c["cup"])
+
+    # Challenger scores already set as _score = composite in process_ticker
 
     picks = select_top_10(cup_candidates)
     print(f"\nSelected {len(picks)} picks:")
@@ -461,16 +502,28 @@ def run():
             p["debt"] = f"{de:.2f}"
             p["deRating"] = "good" if de <= 0.3 else "warn" if de <= 0.5 else "bad"
 
-        # Why this pick — auto-generated summary
-        conf_pct = int(p["cup"]["confidence"] * 100)
-        cup_depth = p["cup"].get("cup_depth_pct", "?")
-        news_idx = p["news_index"]
-        debt_note = "No ETF-level debt." if p["type"] == "etf" else f"D/E ratio of {p['debt']}."
-        p["why"] = (
-            f"{p['ticker']} formed a {cup_depth}% cup over the past 12 months "
-            f"(pattern confidence {conf_pct}%). News coverage index {news_idx}/100 "
-            f"relative to all screened candidates this cycle. {debt_note}"
-        )
+        if strategy.name == "challenger":
+            mom = p["momentum"]
+            debt_note = "No ETF-level debt." if p["type"] == "etf" else f"D/E ratio of {p['debt']}."
+            p["why"] = (
+                f"{p['ticker']} momentum composite {mom['composite']:.2f}. "
+                f"RSI {mom['rsi']:.0f}. "
+                f"Up {mom['r3m']:+.0%} / {mom['r6m']:+.0%} / {mom['r12m']:+.0%} (3/6/12M). "
+                f"5-day momentum {mom['roc5']:+.1%}. "
+                f"Volume {mom['volume_surge']:.1f}× 20-day avg. "
+                f"EMA: {mom['ema_label']}. {debt_note}"
+            )
+        else:
+            # Champion: cup & handle why text
+            conf_pct = int(p["cup"]["confidence"] * 100)
+            cup_depth = p["cup"].get("cup_depth_pct", "?")
+            news_idx = p["news_index"]
+            debt_note = "No ETF-level debt." if p["type"] == "etf" else f"D/E ratio of {p['debt']}."
+            p["why"] = (
+                f"{p['ticker']} formed a {cup_depth}% cup over the past 12 months "
+                f"(pattern confidence {conf_pct}%). News coverage index {news_idx}/100 "
+                f"relative to all screened candidates this cycle. {debt_note}"
+            )
 
         # Clean up internal fields
         p.pop("_score", None)
@@ -478,10 +531,172 @@ def run():
 
     # 6. Render report
     today = datetime.date.today()
+    suffix = "" if strategy.name == "champion" else f"_{strategy.name}"
+    output_path = f"signal_{today.strftime('%Y%m%d')}{suffix}.html"
+    report_module.save(picks, output_path, today, strategy=strategy)
+    print(f"\nDone. Report: {output_path}")
+
+
+def run_combined():
+    """Run both champion and challenger, produce a single tabbed HTML report."""
+    from strategies import CHAMPION, CHALLENGER
+    print("\n=== Signal Weekly Screener — Combined Report ===\n")
+
+    universe = load_universe()
+
+    print(f"\nFetching fundamentals for {len(universe)} tickers...")
+    fundamentals = {}
+    with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+        futures = {ex.submit(fetch_fundamentals, row.ticker): row
+                   for row in universe.itertuples()}
+        for i, future in enumerate(as_completed(futures)):
+            row = futures[future]
+            result = future.result()
+            if result:
+                result["sector"] = row.sector
+                result["type"] = row.type
+                fundamentals[row.ticker] = result
+            if (i + 1) % 50 == 0:
+                print(f"  {i+1}/{len(universe)} fetched...")
+
+    print(f"  Got fundamentals for {len(fundamentals)} tickers")
+    debt_ok = {
+        k: v for k, v in fundamentals.items()
+        if passes_debt_filter(v.get("debt_equity"), v["type"])
+    }
+    print(f"  After debt filter: {len(debt_ok)} tickers")
+
+    print("\nFetching price history and running both signals...")
+    champ_candidates = []
+    chall_candidates = []
+
+    def process_combined(ticker, meta):
+        ohlcv = fetch_price_history(ticker, full_ohlcv=True)
+        if ohlcv is None:
+            return None, None
+        closes = ohlcv["Close"].squeeze()
+        if len(closes) < 60:
+            return None, None
+
+        returns = compute_returns(closes)
+        chart_prices = downsample_for_chart(closes.iloc[-260:], n_points=60)
+        base = {
+            "ticker": ticker, "type": meta["type"],
+            "name": meta.get("short_name", ticker), "sector": meta["sector"],
+            "price": round(meta["price"], 2), "desc": meta.get("desc", ""),
+            "debt_equity": meta.get("debt_equity"),
+            "returns": {k: v for k, v in returns.items() if not k.startswith("_")},
+            "prices": chart_prices,
+        }
+
+        champ_pick = None
+        r5y = returns.get("_r5y_raw")
+        if r5y is None or r5y >= MIN_5Y_RETURN:
+            recent = closes.iloc[-260:] if len(closes) >= 260 else closes
+            cup_result = cup_handle.detect(list(recent.values))
+            if cup_result["detected"]:
+                champ_pick = {**base, "cup": cup_result}
+
+        chall_pick = None
+        mom = momentum_signal.score(ohlcv)
+        if mom is not None:
+            chall_pick = {**base, "momentum": mom, "_score": mom["composite"]}
+
+        return champ_pick, chall_pick
+
+    with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+        futures = {ex.submit(process_combined, k, v): k for k, v in debt_ok.items()}
+        for i, future in enumerate(as_completed(futures)):
+            champ, chall = future.result()
+            if champ:
+                champ_candidates.append(champ)
+            if chall:
+                chall_candidates.append(chall)
+            if (i + 1) % 50 == 0:
+                print(f"  {i+1}/{len(debt_ok)} processed...")
+
+    print(f"  Cup & handle candidates: {len(champ_candidates)}")
+    print(f"  Momentum candidates:     {len(chall_candidates)}")
+
+    # News for champion candidates
+    if champ_candidates:
+        print(f"\nFetching news for {len(champ_candidates)} champion candidates...")
+        for c in champ_candidates:
+            c["news"] = fetch_news_counts(c["ticker"], c["name"])
+            time.sleep(0.1)
+        compute_news_index(champ_candidates)
+        for c in champ_candidates:
+            c["_score"] = score_pick(c["news_index"], c["cup"])
+
+    champion_picks = select_top_10(champ_candidates) if champ_candidates else []
+    challenger_picks = select_top_10(chall_candidates) if chall_candidates else []
+
+    def _enrich(picks, strategy_name):
+        for p in picks:
+            de = p.get("debt_equity")
+            if p["type"] == "etf":
+                p["debt"] = "N/A (ETF)"
+                p["deRating"] = "good"
+            elif de is None:
+                p["debt"] = "N/A"
+                p["deRating"] = "warn"
+            else:
+                p["debt"] = f"{de:.2f}"
+                p["deRating"] = "good" if de <= 0.3 else "warn" if de <= 0.5 else "bad"
+
+            if strategy_name == "challenger":
+                mom = p["momentum"]
+                debt_note = "No ETF-level debt." if p["type"] == "etf" else f"D/E ratio of {p['debt']}."
+                p["why"] = (
+                    f"{p['ticker']} momentum composite {mom['composite']:.2f}. "
+                    f"RSI {mom['rsi']:.0f}. "
+                    f"Up {mom['r3m']:+.0%} / {mom['r6m']:+.0%} / {mom['r12m']:+.0%} (3/6/12M). "
+                    f"5-day momentum {mom['roc5']:+.1%}. "
+                    f"Volume {mom['volume_surge']:.1f}× 20-day avg. "
+                    f"EMA: {mom['ema_label']}. {debt_note}"
+                )
+            else:
+                conf_pct = int(p["cup"]["confidence"] * 100)
+                cup_depth = p["cup"].get("cup_depth_pct", "?")
+                news_idx = p.get("news_index", 0)
+                debt_note = "No ETF-level debt." if p["type"] == "etf" else f"D/E ratio of {p['debt']}."
+                p["why"] = (
+                    f"{p['ticker']} formed a {cup_depth}% cup over the past 12 months "
+                    f"(pattern confidence {conf_pct}%). News coverage index {news_idx}/100 "
+                    f"relative to all screened candidates this cycle. {debt_note}"
+                )
+
+            p.pop("_score", None)
+            p.pop("debt_equity", None)
+
+    _enrich(champion_picks, "champion")
+    _enrich(challenger_picks, "challenger")
+
+    challenger_picks.sort(
+        key=lambda p: p.get("momentum", {}).get("composite", 0), reverse=True
+    )
+
+    print(f"\nSelected {len(champion_picks)} champion picks, {len(challenger_picks)} challenger picks")
+
+    today = datetime.date.today()
     output_path = f"signal_{today.strftime('%Y%m%d')}.html"
-    report_module.save(picks, output_path, today)
+    report_module.save_combined(champion_picks, challenger_picks, output_path, today)
     print(f"\nDone. Report: {output_path}")
 
 
 if __name__ == "__main__":
-    run()
+    import argparse
+    from strategies import CHAMPION, CHALLENGER
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--strategy",
+        choices=["champion", "challenger", "combined"],
+        default="combined",
+    )
+    args = parser.parse_args()
+    if args.strategy == "combined":
+        run_combined()
+    elif args.strategy == "champion":
+        run(strategy=CHAMPION)
+    else:
+        run(strategy=CHALLENGER)
