@@ -40,7 +40,7 @@ MAX_DE_RATIO = 0.5
 MIN_5Y_RETURN = 0.50        # 50%
 MAX_PER_SECTOR = 3
 TOP_N = 10
-PRICE_HISTORY_DAYS = 400    # ~18 months of trading days to pull
+PRICE_HISTORY_DAYS = 1860   # ~5 years + buffer, so 3Y/5Y returns can be computed
 WORKERS = 8                 # parallel yfinance fetches
 
 # ── ETF universe ──────────────────────────────────────────────────────────────
@@ -166,13 +166,15 @@ def fetch_price_history(ticker: str, days: int = PRICE_HISTORY_DAYS,
         start = end - datetime.timedelta(days=days + 10)
         hist = yf.download(ticker, start=str(start), end=str(end),
                            progress=False, auto_adjust=True)
+        if isinstance(hist.columns, pd.MultiIndex):
+            hist.columns = hist.columns.get_level_values(0)
+        # yfinance can return a trailing row with NaN prices (e.g. an unsettled
+        # current session); one NaN close poisons every return and indicator.
+        hist = hist.dropna(subset=["Close"])
         if hist.empty or len(hist) < 60:
             return None
         if full_ohlcv:
-            df = hist[["Open", "High", "Low", "Close", "Volume"]]
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-            return df
+            return hist[["Open", "High", "Low", "Close", "Volume"]]
         return hist["Close"].squeeze()
     except Exception:
         return None

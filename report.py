@@ -253,7 +253,7 @@ picks.forEach((p, i) => {{
           ${{Object.entries(p.returns).map(([k,v]) => `
           <div class="metric">
             <div class="metric-label">${{k}} Return</div>
-            <div class="metric-value good">${{v}}</div>
+            <div class="metric-value ${{v.startsWith('-') ? 'bad' : v === 'N/A' ? '' : 'good'}}">${{v}}</div>
           </div>`).join('')}}
         </div>
       </div>
@@ -603,7 +603,7 @@ champPicks.forEach((p, i) => {{
         <div class="section-label">Debt &amp; Returns</div>
         <div class="metrics-grid">
           <div class="metric"><div class="metric-label">Debt / Equity</div><div class="metric-value ${{p.deRating}}">${{p.debt}}</div></div>
-          ${{Object.entries(p.returns).map(([k,v]) => `<div class="metric"><div class="metric-label">${{k}} Return</div><div class="metric-value good">${{v}}</div></div>`).join('')}}
+          ${{Object.entries(p.returns).map(([k,v]) => `<div class="metric"><div class="metric-label">${{k}} Return</div><div class="metric-value ${{v.startsWith('-') ? 'bad' : v === 'N/A' ? '' : 'good'}}">${{v}}</div></div>`).join('')}}
         </div>
       </div>
       ${{p.news ? `
@@ -701,7 +701,7 @@ challPicks.forEach((p, i) => {{
         <div class="section-label">Debt &amp; Returns</div>
         <div class="metrics-grid">
           <div class="metric"><div class="metric-label">Debt / Equity</div><div class="metric-value ${{p.deRating}}">${{p.debt}}</div></div>
-          ${{Object.entries(p.returns).map(([k,v]) => `<div class="metric"><div class="metric-label">${{k}} Return</div><div class="metric-value good">${{v}}</div></div>`).join('')}}
+          ${{Object.entries(p.returns).map(([k,v]) => `<div class="metric"><div class="metric-label">${{k}} Return</div><div class="metric-value ${{v.startsWith('-') ? 'bad' : v === 'N/A' ? '' : 'good'}}">${{v}}</div></div>`).join('')}}
         </div>
       </div>
       <div class="section" style="padding:0">
